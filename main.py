@@ -3,7 +3,7 @@ import logging
 import os
 
 from starlette.responses import RedirectResponse
-from dbsession import create_all
+#from dbsession import create_all
 
 from endpoints import (
     get_balance,
@@ -53,7 +53,7 @@ if os.getenv("VSPC_REQUEST") == "true":
 
 @app.on_event("startup")
 async def startup():
-    await create_all(drop=False)
+    #await create_all(drop=False)
     # get vecnod
     await get_ve_market_data()
 
