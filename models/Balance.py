@@ -5,6 +5,6 @@ from dbsession import Base
 
 class Balance(Base):
     __tablename__ = 'balances'
-    transaction_id = Column(BigInteger, primary_key=True)
-    address = Column(String)
+    transaction_id = Column(BigInteger)
+    address = Column(String, primary_key=True)
     amount = Column(BigInteger)

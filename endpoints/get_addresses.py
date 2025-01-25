@@ -117,7 +117,7 @@ async def get_all_addresses():
     Returns information about total amount of known $VE addresses in the network.
     """
     async with async_session() as s:
-        total = (await s.execute(select(func.count(Balance.id)))).scalar()
+        total = (await s.execute(select(func.count(Balance.transaction_id)))).scalar()
 
     return {
         "total_addresses": total
