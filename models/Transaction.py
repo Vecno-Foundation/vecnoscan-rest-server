@@ -15,19 +15,17 @@ class Transaction(Base):
     payload = Column(HexColumn)
     block_time = Column(BigInteger)
 
-
 class TransactionOutput(Base):
     __tablename__ = "transactions_outputs"
     transaction_id = Column(HexColumn, primary_key=True)
     index = Column(SmallInteger, primary_key=True)
     amount = Column(BigInteger)
-    script_public_key = Column(HexColumn)
+    script_public_key = Column(HexColumn, unique=True)  # This ensures uniqueness across all rows
     script_public_key_address = Column(AddressColumn)
-
+    
     @property
     def script_public_key_type(self):
         return get_public_key_type(self.script_public_key)
-
 
 class TransactionInput(Base):
     __tablename__ = "transactions_inputs"
