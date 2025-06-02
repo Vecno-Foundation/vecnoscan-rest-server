@@ -1,10 +1,10 @@
 # encoding: utf-8
+
 from typing import List
 
 from fastapi import Path, HTTPException
 from pydantic import BaseModel
 
-from constants import REGEX_VECNO_ADDRESS, ADDRESS_EXAMPLE
 from server import app, vecnod_client
 
 
@@ -18,49 +18,32 @@ class ScriptPublicKeyModel(BaseModel):
 
 
 class UtxoModel(BaseModel):
-    amount: str = ("11501593788",)
+    amount: str = "11501593788",
     scriptPublicKey: ScriptPublicKeyModel
     blockDaaScore: str = "18867232"
-    isCoinbase: bool = False
 
 
 class UtxoResponse(BaseModel):
-    address: str = ADDRESS_EXAMPLE
+    address: str = "vecno:qqtsqwxa3q4aw968753rya4tazahmr7jyn5zu7vkncqlvk2aqlsdsah9ut65e"
     outpoint: OutpointModel
     utxoEntry: UtxoModel
 
 
 @app.get("/addresses/{vecnoAddress}/utxos", response_model=List[UtxoResponse], tags=["Vecno addresses"])
-async def get_utxos_for_address(
-    vecnoAddress: str = Path(description=f"Vecno address as string e.g. {ADDRESS_EXAMPLE}", regex=REGEX_VECNO_ADDRESS),
-):
+async def get_utxos_for_address(vecnoAddress: str = Path(
+    description="Vecno address as string e.g. vecno:qqtsqwxa3q4aw968753rya4tazahmr7jyn5zu7vkncqlvk2aqlsdsah9ut65e",
+    regex="^vecno\:[a-z0-9]{61,64}$")):
     """
     Lists all open utxo for a given vecno address
     """
-    resp = await vecnod_client.request("getUtxosByAddressesRequest", params={"addresses": [vecnoAddress]}, timeout=120)
+    resp = await vecnod_client.request("getUtxosByAddressesRequest",
+                                       params={
+                                           "addresses": [vecnoAddress]
+                                       }, timeout=120)
     try:
-        if "getUtxosByAddressesResponse" in resp and "error" in resp["getUtxosByAddressesResponse"]:
-            raise HTTPException(status_code=400, detail=resp["getUtxosByAddressesResponse"]["error"])
-
         return (utxo for utxo in resp["getUtxosByAddressesResponse"]["entries"] if utxo["address"] == vecnoAddress)
     except KeyError:
-        return []
-
-
-class UtxoRequest(BaseModel):
-    addresses: list[str] = [ADDRESS_EXAMPLE]
-
-
-@app.post("/addresses/utxos", response_model=List[UtxoResponse], tags=["Vecno addresses"])
-async def get_utxos_for_addresses(body: UtxoRequest):
-    """
-    Lists all open utxo for a given vecno address
-    """
-    resp = await vecnod_client.request("getUtxosByAddressesRequest", params={"addresses": body.addresses}, timeout=120)
-    try:
         if "getUtxosByAddressesResponse" in resp and "error" in resp["getUtxosByAddressesResponse"]:
             raise HTTPException(status_code=400, detail=resp["getUtxosByAddressesResponse"]["error"])
-
-        return (utxo for utxo in resp["getUtxosByAddressesResponse"]["entries"])
-    except KeyError:
-        return []
+        else:
+            return []

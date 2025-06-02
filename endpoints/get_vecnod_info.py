@@ -6,15 +6,15 @@ from pydantic import BaseModel
 from server import app, vecnod_client
 
 
-class VecnodInfoResponse(BaseModel):
+class vecnodInfoResponse(BaseModel):
     mempoolSize: str = "1"
-    serverVersion: str = "0.0.1"
+    serverVersion: str = "0.12.2"
     isUtxoIndexed: bool = True
     isSynced: bool = True
-    p2pIdHashed: str = "36a17cd8644eef34fc7fe4719655e06dbdf117008900c46975e66c35acd09b01"
+    p2pIdHashed : str = "36a17cd8644eef34fc7fe4719655e06dbdf117008900c46975e66c35acd09b01"
 
 
-@app.get("/info/vecnod", response_model=VecnodInfoResponse, tags=["Vecno network info"])
+@app.get("/info/vecnod", response_model=vecnodInfoResponse, tags=["Vecno Network info"])
 async def get_vecnod_info():
     """
     Get some information for vecnod instance, which is currently connected.

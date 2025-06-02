@@ -1,5 +1,6 @@
 # encoding: utf-8
 
+import os
 from pydantic import BaseModel
 
 from helper.deflationary_table import DEFLATIONARY_TABLE
@@ -16,6 +17,8 @@ async def get_blockreward(stringOnly: bool = False):
     Returns the current blockreward in VE/block
     """
     resp = await vecnod_client.request("getBlockDagInfoRequest")
+    if resp is  None: 
+        return "Request getBlockDagInfoRequest failed"
     daa_score = int(resp["getBlockDagInfoResponse"]["virtualDaaScore"])
 
     reward = 0
@@ -25,8 +28,14 @@ async def get_blockreward(stringOnly: bool = False):
         if daa_score < to_break_score:
             break
 
+    
+    bps = int(os.getenv("BPS", "1"))
+    reward = reward / bps
+
     if not stringOnly:
-        return {"blockreward": reward}
+        return {"blockreward": reward,}
 
     else:
         return f"{reward:.2f}"
+
+

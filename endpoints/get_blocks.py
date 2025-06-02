@@ -5,316 +5,286 @@ from typing import List
 from fastapi import Query, Path, HTTPException
 from fastapi import Response
 from pydantic import BaseModel
-from sqlalchemy import select, exists, func
+from sqlalchemy import select
 
 from dbsession import async_session
 from endpoints.get_virtual_chain_blue_score import current_blue_score_data
-from helper.difficulty_calculation import bits_to_difficulty
-from helper.mining_address import get_miner_payload_from_block, retrieve_miner_info_from_payload
 from models.Block import Block
-from models.BlockParent import BlockParent
-from models.BlockTransaction import BlockTransaction
-from models.Subnetwork import Subnetwork
-from models.Transaction import TransactionOutput, TransactionInput, Transaction
-from models.TransactionAcceptance import TransactionAcceptance
+from models.Transaction import Transaction, TransactionOutput, TransactionInput
 from server import app, vecnod_client
 
 IS_SQL_DB_CONFIGURED = os.getenv("SQL_URI") is not None
 
 
 class VerboseDataModel(BaseModel):
-    hash: str = "18c7afdf8f447ca06adb8b4946dc45f5feb1188c7d177da6094dfbc760eca699"
-    difficulty: float = (4102204523252.94,)
-    selectedParentHash: str = "580f65c8da9d436480817f6bd7c13eecd9223b37f0d34ae42fb17e1e9fda397e"
-    transactionIds: List[str] | None = ["533f8314bf772259fe517f53507a79ebe61c8c6a11748d93a0835551233b3311"]
-    blueScore: str = "18483232"
+    hash: str = ""
+    difficulty: float = 0
+    selectedParentHash: str = ""
+    transactionIds: List[str] | None = []
+    blueScore: str = ""
     childrenHashes: List[str] | None = None
     mergeSetBluesHashes: List[str] = []
     mergeSetRedsHashes: List[str] = []
-    isChainBlock: bool = False
+    isChainBlock: bool | None = None
 
 
 class ParentHashModel(BaseModel):
-    parentHashes: List[str] = ["580f65c8da9d436480817f6bd7c13eecd9223b37f0d34ae42fb17e1e9fda397e"]
+    parentHashes: List[str] = []
 
 
 class BlockHeader(BaseModel):
-    version: int = 1
-    hashMerkleRoot: str = "e6641454e16cff4f232b899564eeaa6e480b66069d87bee6a2b2476e63fcd887"
-    acceptedIdMerkleRoot: str = "9bab45b027a0b2b47135b6f6f866e5e4040fc1fdf2fe56eb0c90a603ce86092b"
-    utxoCommitment: str = "236d5f9ffd19b317a97693322c3e2ae11a44b5df803d71f1ccf6c2393bc6143c"
-    timestamp: str = "1656450648874"
-    bits: int = 455233226
-    nonce: str = "14797571275553019490"
-    daaScore: str = "19984482"
-    blueWork: str = "2d1b3f04f8a0dcd31"
+    version: int = 0
+    hashMerkleRoot: str = ""
+    acceptedIdMerkleRoot: str = ""
+    utxoCommitment: str = ""
+    timestamp: str = ""
+    bits: int = 0
+    nonce: str = ""
+    daaScore: str = ""
+    blueWork: str = ""
     parents: List[ParentHashModel]
-    blueScore: str = "18483232"
-    pruningPoint: str = "5d32a9403273a34b6551b84340a1459ddde2ae6ba59a47987a6374340ba41d5d"
-
-
-class ExtraModel(BaseModel):
-    color: str | None = None
-    minerAddress: str | None = None
-    minerInfo: str = None
+    blueScore: str = ""
+    pruningPoint: str = ""
 
 
 class BlockModel(BaseModel):
     header: BlockHeader
     transactions: list | None
     verboseData: VerboseDataModel
-    extra: ExtraModel | None
 
 
 class BlockResponse(BaseModel):
-    blockHashes: List[str] = [
-        "44edf9bfd32aa154bfad64485882f184372b64bd60565ba121b42fc3cb1238f3",
-        "18c7afdf8f447ca06adb8b4946dc45f5feb1188c7d177da6094dfbc760eca699",
-        "9a822351cd293a653f6721afec1646bd1690da7124b5fbe87001711406010604",
-        "2fda0dad4ec879b4ad02ebb68c757955cab305558998129a7de111ab852e7dcb",
-    ]
+    blockHashes: List[str] = [""]
     blocks: List[BlockModel] | None
 
 
 @app.get("/blocks/{blockId}", response_model=BlockModel, tags=["Vecno blocks"])
-async def get_block(response: Response, blockId: str = Path(regex="[a-f0-9]{64}"), includeColor: bool = False):
+async def get_block(response: Response,
+                    blockId: str = Path(regex="[a-f0-9]{64}")):
     """
     Get block information for a given block id
     """
-    resp = await vecnod_client.request("getBlockRequest", params={"hash": blockId, "includeTransactions": True})
-    block = None
+    resp = await vecnod_client.request("getBlockRequest",
+                                       params={
+                                           "hash": blockId,
+                                           "includeTransactions": True
+                                       })
+    requested_block = None
+
     if "block" in resp["getBlockResponse"]:
-        block = resp["getBlockResponse"]["block"]
-
-        block["extra"] = {}
-        if block and includeColor:
-            if block["verboseData"]["isChainBlock"]:
-                block["extra"] = {"color": "blue"}
-            else:
-                block["extra"]["color"] = await get_block_color_from_vecnod(block)
-
-        miner_payload = get_miner_payload_from_block(block)
-        miner_info, miner_address = retrieve_miner_info_from_payload(miner_payload)
-
-        block["extra"]["minerInfo"] = miner_info
-        block["extra"]["minerAddress"] = miner_address
-
+        # We found the block in vecnod. Just use it
+        requested_block = resp["getBlockResponse"]["block"]
     else:
         if IS_SQL_DB_CONFIGURED:
+            # Didn't find the block in vecnod. Try getting it from the DB
             response.headers["X-Data-Source"] = "Database"
-            block = await get_block_from_db(blockId, True)
-            if block and includeColor:
-                if block["verboseData"]["isChainBlock"]:
-                    block["extra"] = {"color": "blue"}
-                else:
-                    block["extra"] = {"color": await get_block_color_from_db(block)}
+            requested_block = await get_block_from_db(blockId)
 
-    add_cache_control_for_block(block, response)
-    return block
+    if not requested_block:
+        # Still did not get the block
+        print("hier")
+        raise HTTPException(status_code=404, detail="Block not found", headers={
+            "Cache-Control": "public, max-age=1"
+        })
+
+    # We found the block, now we guarantee it contains the transactions
+    # It's possible that the block from vecnod does not contain transactions
+    if 'transactions' not in requested_block or not requested_block['transactions']:
+        requested_block['transactions'] = await get_block_transactions(blockId)
+
+    if int(requested_block["header"]["blueScore"]) > current_blue_score_data["blue_score"] - 20:
+        response.headers["Cache-Control"] = "public, max-age=1"
+
+    elif int(requested_block["header"]["blueScore"]) > current_blue_score_data["blue_score"] - 60:
+        response.headers["Cache-Control"] = "public, max-age=10"
+
+    else:
+        response.headers["Cache-Control"] = "public, max-age=600"
+
+    return requested_block
 
 
 @app.get("/blocks", response_model=BlockResponse, tags=["Vecno blocks"])
-async def get_blocks(
-    response: Response,
-    lowHash: str = Query(regex="[a-f0-9]{64}"),
-    includeBlocks: bool = False,
-    includeTransactions: bool = False,
-):
+async def get_blocks(response: Response,
+                     lowHash: str = Query(regex="[a-f0-9]{64}"),
+                     includeBlocks: bool = False,
+                     includeTransactions: bool = False):
     """
-    Lists block beginning from a low hash (block id).
+    Lists block beginning from a low hash (block id). Note that this function tries to determine the blocks from
+    the vecnod node. If this is not possible, the database is getting queryied as backup. In this case the response
+    header contains the key value pair: x-data-source: database.
+
+    Additionally the fields in verboseData: isChainBlock, childrenHashes and transactionIds can't be filled.
     """
     response.headers["Cache-Control"] = "public, max-age=3"
 
-    resp = await vecnod_client.request(
-        "getBlocksRequest",
-        params={"lowHash": lowHash, "includeBlocks": includeBlocks, "includeTransactions": includeTransactions},
-    )
+    resp = await vecnod_client.request("getBlocksRequest",
+                                       params={
+                                           "lowHash": lowHash,
+                                           "includeBlocks": includeBlocks,
+                                           "includeTransactions": includeTransactions
+                                       })
+
     return resp["getBlocksResponse"]
 
 
 @app.get("/blocks-from-bluescore", response_model=List[BlockModel], tags=["Vecno blocks"])
-async def get_blocks_from_bluescore(response: Response, blueScore: int = 43679173, includeTransactions: bool = False):
+async def get_blocks_from_bluescore(response: Response,
+                                    blueScore: int = 43679173,
+                                    includeTransactions: bool = False):
     """
-    Lists block beginning from a low hash (block id)
+    Lists block beginning from a low hash (block id). Note that this function is running on a vecnod and not returning
+    data from database.
     """
     response.headers["X-Data-Source"] = "Database"
 
     if blueScore > current_blue_score_data["blue_score"] - 20:
         response.headers["Cache-Control"] = "no-store"
 
-    async with async_session() as s:
-        blocks = (await s.execute(block_join_query().where(Block.blue_score == blueScore))).all()
+    blocks = await get_blocks_from_db_by_bluescore(blueScore)
 
-    result = []
-    for block, is_chain_block, parents, children, transaction_ids in blocks:
-        transactions = await get_transactions(block.hash, transaction_ids) if includeTransactions else None
-        result.append(map_block_from_db(block, is_chain_block, parents, children, transaction_ids, transactions))
-
-    return result
-
-
-async def get_block_from_db(blockId, includeTransactions):
-    async with async_session() as s:
-        block = (await s.execute(block_join_query().where(Block.hash == blockId).limit(1))).first()
-
-    if block is None:
-        return None
-
-    block, is_chain_block, parents, children, transaction_ids = block
-    transactions = await get_transactions(block.hash, transaction_ids) if includeTransactions else None
-    return map_block_from_db(block, is_chain_block, parents, children, transaction_ids, transactions)
-
-
-async def get_block_color_from_vecnod(block):
-    blockId = block["verboseData"]["hash"]
-    resp = await vecnod_client.request("getCurrentBlockColorRequest", params={"hash": blockId})
-    if "blue" in resp["getCurrentBlockColorResponse"]:
-        return "blue" if resp["getCurrentBlockColorResponse"]["blue"] is True else "red"
-    else:
-        return None
-
-
-async def get_block_color_from_db(block):
-    blockId = block["verboseData"]["hash"]
-    async with async_session() as s:
-        blocks = (
-            (
-                await s.execute(
-                    select(Block)
-                    .distinct()
-                    .join(TransactionAcceptance, TransactionAcceptance.block_hash == Block.hash)
-                    .join(BlockParent, BlockParent.block_hash == TransactionAcceptance.block_hash)
-                    .filter(BlockParent.parent_hash == blockId)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for block in blocks:
-            if blockId in block.merge_set_blues_hashes:
-                return "blue"
-            elif blockId in block.merge_set_reds_hashes:
-                return "red"
-    return None
-
-
-def map_block_from_db(block, is_chain_block, parents, children, transaction_ids, transactions):
-    return {
+    return [{
         "header": {
             "version": block.version,
             "hashMerkleRoot": block.hash_merkle_root,
             "acceptedIdMerkleRoot": block.accepted_id_merkle_root,
             "utxoCommitment": block.utxo_commitment,
-            "timestamp": block.timestamp,
+            "timestamp": round(block.timestamp.timestamp() * 1000),
             "bits": block.bits,
             "nonce": block.nonce,
             "daaScore": block.daa_score,
             "blueWork": block.blue_work,
-            "parents": [{"parentHashes": parents}] if parents else [],
+            "parents": [{"parentHashes": block.parents}],
             "blueScore": block.blue_score,
-            "pruningPoint": block.pruning_point,
+            "pruningPoint": block.pruning_point
         },
-        "transactions": transactions,
+        "transactions": (txs := (await get_block_transactions(block.hash))) if includeTransactions else None,
         "verboseData": {
             "hash": block.hash,
-            "difficulty": bits_to_difficulty(block.bits),
+            "difficulty": block.difficulty,
             "selectedParentHash": block.selected_parent_hash,
-            "transactionIds": transaction_ids,
+            "transactionIds": [tx["verboseData"]["transactionId"] for tx in txs] if includeTransactions else None,
             "blueScore": block.blue_score,
-            "childrenHashes": children,
-            "mergeSetBluesHashes": block.merge_set_blues_hashes or [],
-            "mergeSetRedsHashes": block.merge_set_reds_hashes or [],
-            "isChainBlock": is_chain_block or False,
-        },
-    }
+            "childrenHashes": None,
+            "mergeSetBluesHashes": block.merge_set_blues_hashes,
+            "mergeSetRedsHashes": block.merge_set_reds_hashes,
+            "isChainBlock": None,
+        }
+    } for block in blocks]
 
 
-def block_join_query():
-    return select(
-        Block,
-        exists().where(TransactionAcceptance.block_hash == Block.hash),
-        select(func.array_agg(BlockParent.parent_hash)).where(BlockParent.block_hash == Block.hash).scalar_subquery(),
-        select(func.array_agg(BlockParent.block_hash)).where(BlockParent.parent_hash == Block.hash).scalar_subquery(),
-        select(func.array_agg(BlockTransaction.transaction_id))
-        .where(BlockTransaction.block_hash == Block.hash)
-        .scalar_subquery(),
-    )
+async def get_blocks_from_db_by_bluescore(blue_score):
+    async with async_session() as s:
+        blocks = (await s.execute(select(Block)
+                                  .where(Block.blue_score == blue_score))).scalars().all()
+
+    return blocks
 
 
-def add_cache_control_for_block(block, response):
-    if not block:
-        raise HTTPException(status_code=404, detail="Block not found", headers={"Cache-Control": "public, max-age=3"})
-    elif int(block["header"]["blueScore"]) > current_blue_score_data["blue_score"] - 20:
-        response.headers["Cache-Control"] = "public, max-age=2"
-    elif int(block["header"]["blueScore"]) > current_blue_score_data["blue_score"] - 60:
-        response.headers["Cache-Control"] = "public, max-age=10"
-    elif int(block["header"]["blueScore"]) > current_blue_score_data["blue_score"] - 600:
-        response.headers["Cache-Control"] = "public, max-age=60"
-    else:
-        response.headers["Cache-Control"] = "public, max-age=600"
-
-
-async def get_transactions(blockId, transactionIds):
+async def get_block_from_db(blockId):
     """
-    Get the transactions associated with a block
+    Get the block from the database
     """
     async with async_session() as s:
-        transactions = (
-            await s.execute(
-                select(Transaction, Subnetwork)
-                .join(Subnetwork, Transaction.subnetwork_id == Subnetwork.id)
-                .filter(Transaction.transaction_id.in_(transactionIds))
-            )
-        ).all()
+        requested_block = await s.execute(select(Block)
+                                          .where(Block.hash == blockId).limit(1))
 
-        tx_outputs = (
-            (await s.execute(select(TransactionOutput).where(TransactionOutput.transaction_id.in_(transactionIds))))
-            .scalars()
-            .all()
-        )
+        try:
+            requested_block = requested_block.first()[0]  # type: Block
+        except TypeError:
+            raise HTTPException(status_code=404, detail="Block not found", headers={
+                "Cache-Control": "public, max-age=3"
+            })
 
-        tx_inputs = (
-            (await s.execute(select(TransactionInput).where(TransactionInput.transaction_id.in_(transactionIds))))
-            .scalars()
-            .all()
-        )
-
-    tx_list = []
-    for tx, sub in transactions:
-        tx_list.append(
-            {
-                "inputs": [
-                    {
-                        "previousOutpoint": {
-                            "transactionId": tx_inp.previous_outpoint_hash,
-                            "index": tx_inp.previous_outpoint_index,
-                        },
-                        "signatureScript": tx_inp.signature_script,
-                        "sigOpCount": tx_inp.sig_op_count,
-                    }
-                    for tx_inp in tx_inputs
-                    if tx_inp.transaction_id == tx.transaction_id
-                ],
-                "outputs": [
-                    {
-                        "amount": tx_out.amount,
-                        "scriptPublicKey": {"scriptPublicKey": tx_out.script_public_key},
-                        "verboseData": {
-                            "scriptPublicKeyType": tx_out.script_public_key_type,
-                            "scriptPublicKeyAddress": tx_out.script_public_key_address,
-                        },
-                    }
-                    for tx_out in tx_outputs
-                    if tx_out.transaction_id == tx.transaction_id
-                ],
-                "subnetworkId": sub.subnetwork_id,
-                "verboseData": {
-                    "transactionId": tx.transaction_id,
-                    "hash": tx.hash,
-                    "mass": tx.mass,
-                    "blockHash": blockId,
-                    "blockTime": tx.block_time,
-                },
+    if requested_block:
+        return {
+            "header": {
+                "version": requested_block.version,
+                "hashMerkleRoot": requested_block.hash_merkle_root,
+                "acceptedIdMerkleRoot": requested_block.accepted_id_merkle_root,
+                "utxoCommitment": requested_block.utxo_commitment,
+                "timestamp": round(requested_block.timestamp.timestamp() * 1000),
+                "bits": requested_block.bits,
+                "nonce": requested_block.nonce,
+                "daaScore": requested_block.daa_score,
+                "blueWork": requested_block.blue_work,
+                "parents": [{"parentHashes": requested_block.parents}],
+                "blueScore": requested_block.blue_score,
+                "pruningPoint": requested_block.pruning_point
+            },
+            "transactions": None,  # This will be filled later
+            "verboseData": {
+                "hash": requested_block.hash,
+                "difficulty": requested_block.difficulty,
+                "selectedParentHash": requested_block.selected_parent_hash,
+                "transactionIds": None,  # information not in database
+                "blueScore": requested_block.blue_score,
+                "childrenHashes": None,  # information not in database
+                "mergeSetBluesHashes": requested_block.merge_set_blues_hashes,
+                "mergeSetRedsHashes": requested_block.merge_set_reds_hashes,
+                "isChainBlock": None,  # information not in database
             }
-        )
+        }
+    return None
+
+
+"""
+Get the transactions associated with a block
+"""
+
+
+async def get_block_transactions(blockId):
+    # create tx data
+    tx_list = []
+
+    async with async_session() as s:
+        transactions = await s.execute(select(Transaction).filter(Transaction.block_hash.contains([blockId])))
+
+        transactions = transactions.scalars().all()
+
+        tx_outputs = await s.execute(select(TransactionOutput)
+                                     .where(TransactionOutput.transaction_id
+                                            .in_([tx.transaction_id for tx in transactions])))
+
+        tx_outputs = tx_outputs.scalars().all()
+
+        tx_inputs = await s.execute(select(TransactionInput)
+                                    .where(TransactionInput.transaction_id
+                                           .in_([tx.transaction_id for tx in transactions])))
+
+        tx_inputs = tx_inputs.scalars().all()
+
+    for tx in transactions:
+        tx_list.append({
+            "inputs": [
+                {
+                    "previousOutpoint": {
+                        "transactionId": tx_inp.previous_outpoint_hash,
+                        "index": tx_inp.previous_outpoint_index
+                    },
+                    "signatureScript": tx_inp.signature_script,
+                    "sigOpCount": tx_inp.sig_op_count
+                }
+                for tx_inp in tx_inputs if tx_inp.transaction_id == tx.transaction_id],
+            "outputs": [
+                {
+                    "amount": tx_out.amount,
+                    "scriptPublicKey": {
+                        "scriptPublicKey": tx_out.script_public_key
+                    },
+                    "verboseData": {
+                        "scriptPublicKeyType": tx_out.script_public_key_type,
+                        "scriptPublicKeyAddress": tx_out.script_public_key_address
+                    }
+                } for tx_out in tx_outputs if tx_out.transaction_id == tx.transaction_id],
+            "subnetworkId": tx.subnetwork_id,
+            "verboseData": {
+                "transactionId": tx.transaction_id,
+                "hash": tx.hash,
+                "mass": tx.mass,
+                "blockHash": tx.block_hash,
+                "blockTime": tx.block_time
+            }
+        })
+
     return tx_list

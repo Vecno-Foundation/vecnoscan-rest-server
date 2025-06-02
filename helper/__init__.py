@@ -16,7 +16,10 @@ aiocache.logger.setLevel(logging.WARNING)
 
 @cached(ttl=120)
 async def get_ve_price():
-    return (await get_ve_market_data())["current_price"]["usd"]
+    market_data = await get_ve_market_data()
+    if market_data is None:
+        raise ValueError("Market data could not be retrieved")
+    return market_data.get("current_price", {}).get("usd", "Price unavailable")
 
 
 @cached(ttl=300)
@@ -34,7 +37,7 @@ async def get_ve_market_data():
                 elif resp.status == 429:
                     FLOOD_DETECTED = time.time()
                     if CACHE:
-                        _logger.warning("Using cached value. 429 detected.")
+                        _logger.warning('Using cached value. 429 detected.')
                     _logger.warning("Rate limit exceeded.")
                 else:
                     _logger.error(f"Did not retrieve the market data. Status code {resp.status}")

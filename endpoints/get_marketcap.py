@@ -20,7 +20,9 @@ async def get_marketcap(stringOnly: bool = False):
     mcap = round(float(resp["getCoinSupplyResponse"]["circulatingSompi"]) / 100000000 * ve_price)
 
     if not stringOnly:
-        return {"marketcap": mcap}
+        return {
+            "marketcap": mcap
+        }
     else:
         if mcap < 1000000000:
             return f"{round(mcap / 1000000, 1)}M"

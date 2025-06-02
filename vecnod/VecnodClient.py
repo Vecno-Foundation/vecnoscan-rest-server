@@ -3,8 +3,7 @@
 from vecnod.VecnodThread import VecnodThread
 
 
-# poetry run python -m grpc_tools.protoc -I./protos --python_out=. --grpc_python_out=. ./protos/rpc.proto ./protos/messages.proto
-
+# pipenv run python -m grpc_tools.protoc -I./protos --python_out=. --grpc_python_out=. ./protos/rpc.proto ./protos/messages.proto ./protos/p2p.proto
 
 class VecnodClient(object):
     def __init__(self, vecnod_host, vecnod_port):
@@ -24,7 +23,7 @@ class VecnodClient(object):
             self.p2p_id = info["getInfoResponse"]["p2pId"]
             return info
 
-        except Exception:
+        except Exception as exc:
             return False
 
     async def request(self, command, params=None, timeout=5):

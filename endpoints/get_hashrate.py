@@ -1,6 +1,5 @@
 # encoding: utf-8
 import json
-from datetime import datetime
 
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -8,7 +7,6 @@ from sqlalchemy import select
 from dbsession import async_session
 from endpoints import sql_db_only
 from helper import KeyValueStore
-from helper.difficulty_calculation import bits_to_difficulty
 from models.Block import Block
 from server import app, vecnod_client
 
@@ -35,15 +33,17 @@ class MaxHashrateResponse(BaseModel):
 @app.get("/info/hashrate", response_model=HashrateResponse | str, tags=["Vecno network info"])
 async def get_hashrate(stringOnly: bool = False):
     """
-    Returns the current hashrate for Vecno network in MH/s.
+    Returns the current hashrate for Vecno network in TH/s.
     """
 
     resp = await vecnod_client.request("getBlockDagInfoRequest")
     hashrate = resp["getBlockDagInfoResponse"]["difficulty"] * 2
-    hashrate_in_th = hashrate / 1_000_000
+    hashrate_in_th = hashrate / 1_000_000_000_000
 
     if not stringOnly:
-        return {"hashrate": hashrate_in_th}
+        return {
+            "hashrate": hashrate_in_th
+        }
 
     else:
         return f"{hashrate_in_th:.01f}"
@@ -53,39 +53,33 @@ async def get_hashrate(stringOnly: bool = False):
 @sql_db_only
 async def get_max_hashrate():
     """
-    Returns the current hashrate for Vecno network in MH/s.
+    Returns the current hashrate for Vecno network in TH/s.
     """
     maxhash_last_value = json.loads((await KeyValueStore.get("maxhash_last_value")) or "{}")
     maxhash_last_bluescore = int((await KeyValueStore.get("maxhash_last_bluescore")) or 0)
     print(f"Start at {maxhash_last_bluescore}")
 
     async with async_session() as s:
-        block = (
-            await s.execute(
-                select(Block)
-                .filter(Block.blue_score > maxhash_last_bluescore)
-                .order_by(Block.bits.asc())  # bits and difficulty is inversely proportional
-                .limit(1)
-            )
-        ).scalar()
+        block = (await s.execute(select(Block)
+                                 .filter(Block.blue_score > maxhash_last_bluescore)
+                                 .order_by(Block.difficulty.desc()).limit(1))).scalar()
 
-    block_difficulty = bits_to_difficulty(block.bits)
-    hashrate_new = block_difficulty * 2
+    hashrate_new = block.difficulty * 2
     hashrate_old = maxhash_last_value.get("blockheader", {}).get("difficulty", 0) * 2
 
     await KeyValueStore.set("maxhash_last_bluescore", str(block.blue_score))
 
     if hashrate_new > hashrate_old:
-        response = {
-            "hashrate": hashrate_new / 1_000_000,
-            "blockheader": {
-                "hash": block.hash,
-                "timestamp": datetime.fromtimestamp(block.timestamp / 1000).isoformat(),
-                "difficulty": block_difficulty,
-                "daaScore": block.daa_score,
-                "blueScore": block.blue_score,
-            },
-        }
+        response = {"hashrate":  hashrate_new / 1_000_000_000_000,
+                    "blockheader":
+                        {
+                            "hash": block.hash,
+                            "timestamp": block.timestamp.isoformat(),
+                            "difficulty": block.difficulty,
+                            "daaScore": block.daa_score,
+                            "blueScore": block.blue_score
+                        }
+                    }
         await KeyValueStore.set("maxhash_last_value", json.dumps(response))
         return response
 

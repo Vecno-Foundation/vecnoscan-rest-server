@@ -13,36 +13,31 @@ from .messages_pb2 import VecnodMessage
 MAX_MESSAGE_LENGTH = 1024 * 1024 * 1024  # 1GB
 
 
-class VecnodCommunicationError(Exception):
-    pass
+class VecnodCommunicationError(Exception): pass
 
 
 # pipenv run python -m grpc_tools.protoc -I./protos --python_out=. --grpc_python_out=. ./protos/rpc.proto ./protos/messages.proto ./protos/p2p.proto
 
-
 class VecnodThread(object):
     def __init__(self, vecnod_host, vecnod_port, async_thread=True):
+
         self.vecnod_host = vecnod_host
         self.vecnod_port = vecnod_port
 
         if async_thread:
-            self.channel = grpc.aio.insecure_channel(
-                f"{vecnod_host}:{vecnod_port}",
-                compression=grpc.Compression.Gzip,
-                options=[
-                    ("grpc.max_send_message_length", MAX_MESSAGE_LENGTH),
-                    ("grpc.max_receive_message_length", MAX_MESSAGE_LENGTH),
-                ],
-            )
+            self.channel = grpc.aio.insecure_channel(f'{vecnod_host}:{vecnod_port}',
+                                                     compression=grpc.Compression.Gzip,
+                                                     options=[
+                                                         ('grpc.max_send_message_length', MAX_MESSAGE_LENGTH),
+                                                         ('grpc.max_receive_message_length', MAX_MESSAGE_LENGTH),
+                                                     ])
         else:
-            self.channel = grpc.insecure_channel(
-                f"{vecnod_host}:{vecnod_port}",
-                compression=grpc.Compression.Gzip,
-                options=[
-                    ("grpc.max_send_message_length", MAX_MESSAGE_LENGTH),
-                    ("grpc.max_receive_message_length", MAX_MESSAGE_LENGTH),
-                ],
-            )
+            self.channel = grpc.insecure_channel(f'{vecnod_host}:{vecnod_port}',
+                                                 compression=grpc.Compression.Gzip,
+                                                 options=[
+                                                     ('grpc.max_send_message_length', MAX_MESSAGE_LENGTH),
+                                                     ('grpc.max_receive_message_length', MAX_MESSAGE_LENGTH),
+                                                 ])
             self.__sync_queue = Queue()
         self.stub = messages_pb2_grpc.RPCStub(self.channel)
 
@@ -61,7 +56,7 @@ class VecnodThread(object):
             try:
                 async for resp in self.stub.MessageStream(self.yield_cmd(command, params), timeout=120):
                     self.__queue.put_nowait("done")
-                    return json_format.MessageToDict(resp, always_print_fields_with_no_presence=True)
+                    return json_format.MessageToDict(resp)
             except grpc.aio._call.AioRpcError as e:
                 raise VecnodCommunicationError(str(e))
 
@@ -70,7 +65,7 @@ class VecnodThread(object):
             async for resp in self.stub.MessageStream(self.yield_cmd(command, params)):
                 # self.__queue.put_nowait("done")
                 if callback_func:
-                    await callback_func(json_format.MessageToDict(resp, always_print_fields_with_no_presence=True))
+                    await callback_func(json_format.MessageToDict(resp))
 
             print("loop done...")
 

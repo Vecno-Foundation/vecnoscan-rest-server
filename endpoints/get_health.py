@@ -14,7 +14,7 @@ from server import app, vecnod_client
 
 class VecnodResponse(BaseModel):
     vecnodHost: str = ""
-    serverVersion: str = "0.0.1"
+    serverVersion: str = "0.12.6"
     isUtxoIndexed: bool = True
     isSynced: bool = True
     p2pId: str = "1231312"
@@ -27,16 +27,16 @@ class HealthResponse(BaseModel):
 @app.get("/info/health", response_model=HealthResponse, tags=["Vecno network info"])
 async def health_state():
     """
-    Returns the current hashrate for Vecno network in MH/s.
+    Returns the current hashrate for Vecno network in TH/s.
     """
     await vecnod_client.initialize_all()
 
     vecnods = []
 
     async with async_session() as s:
-        last_block_time = (
-            await s.execute(select(Transaction.block_time).limit(1).order_by(Transaction.block_time.desc()))
-        ).scalar()
+        last_block_time = (await s.execute(select(Transaction.block_time)
+                                           .limit(1)
+                                           .order_by(Transaction.block_time.desc()))).scalar()
 
     time_diff = datetime.now() - datetime.fromtimestamp(last_block_time / 1000)
 
@@ -44,14 +44,14 @@ async def health_state():
         raise HTTPException(status_code=500, detail="Transactions not up to date")
 
     for i, vecnod_info in enumerate(vecnod_client.vecnods):
-        vecnods.append(
-            {
-                "isSynced": vecnod_info.is_synced,
-                "isUtxoIndexed": vecnod_info.is_utxo_indexed,
-                "p2pId": hashlib.sha256(vecnod_info.p2p_id.encode()).hexdigest(),
-                "vecnodHost": f"VECNOD_HOST_{i + 1}",
-                "serverVersion": vecnod_info.server_version,
-            }
-        )
+        vecnods.append({
+            "isSynced": vecnod_info.is_synced,
+            "isUtxoIndexed": vecnod_info.is_utxo_indexed,
+            "p2pId": hashlib.sha256(vecnod_info.p2p_id.encode()).hexdigest(),
+            "vecnodHost": f"VECNOD_HOST_{i + 1}",
+            "serverVersion": vecnod_info.server_version
+        })
 
-    return {"vecnodServers": vecnods}
+    return {
+        "vecnodServers": vecnods
+    }

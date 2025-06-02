@@ -2,7 +2,6 @@
 
 from typing import List
 
-from fastapi import Query
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
 
@@ -29,60 +28,56 @@ class SubmitTxScriptPublicKey(BaseModel):
 class SubmitTxOutput(BaseModel):
     amount: int
     scriptPublicKey: SubmitTxScriptPublicKey
-    # verboseData: TxOutputVerboseData | None
+    # verboseData: TxOutputVerboseData 
 
 
 class SubmitTxModel(BaseModel):
     version: int
     inputs: List[SubmitTxInput]
     outputs: List[SubmitTxOutput]
-    lockTime: int | None = 0
-    subnetworkId: str | None
+    lockTime: int  = 0
+    subnetworkId: str 
 
 
 class SubmitTransactionRequest(BaseModel):
     transaction: SubmitTxModel
-    allowOrphan: bool = False
-
-
-class SubmitTransactionReplacementRequest(BaseModel):
-    transaction: SubmitTxModel
+    allowOrphan: bool = True
 
 
 class SubmitTransactionResponse(BaseModel):
-    transactionId: str | None
-    error: str | None
+    transactionId: str 
+    error: str 
 
 
-@app.post(
-    "/transactions",
-    tags=["Vecno transactions"],
-    response_model_exclude_unset=True,
-    responses={200: {"model": SubmitTransactionResponse}, 400: {"model": SubmitTransactionResponse}},
-)
-async def submit_a_new_transaction(
-    body: SubmitTransactionRequest,
-    replaceByFee: bool = Query(description="Replace an existing transaction in the mempool", default=False),
-):
-    if replaceByFee:
-        # Replace by fee doesn't have the allowOrphan attribute
-        body = SubmitTransactionReplacementRequest(transaction=body.transaction)
-        tx_resp = await vecnod_client.request("submitTransactionReplacementRequest", params=body.dict())
-        tx_resp = tx_resp["submitTransactionReplacementResponse"]
-    else:
-        tx_resp = await vecnod_client.request("submitTransactionRequest", params=body.dict())
-        tx_resp = tx_resp["submitTransactionResponse"]
+@app.post("/transactions",
+          tags=["Vecno transactions"],
+          response_model_exclude_unset=True,
+          responses={200: {"model": SubmitTransactionResponse},
+                       400: {"model": SubmitTransactionResponse}})
+async def submit_a_new_transaction(body: SubmitTransactionRequest):
+    """
+    Forwards the body directly to vecnod with the command submitTransactionRequest
+    """
+    tx_resp = await vecnod_client.request("submitTransactionRequest",
+                                          params=body.dict())
 
+    tx_resp = tx_resp["submitTransactionResponse"]
+
+    # if error in response
     if "error" in tx_resp:
-        return JSONResponse(status_code=400, content={"error": tx_resp["error"].get("message", "")})
+        return JSONResponse(status_code=400,
+                            content={"error": tx_resp["error"].get("message", "")})
 
     # if transactionId is in response
     elif "transactionId" in tx_resp:
-        return {"transactionId": tx_resp["transactionId"]}
+        return {
+            "transactionId": tx_resp["transactionId"]
+        }
 
     # something else went wrong
     else:
-        return JSONResponse(status_code=400, content={"error": str(tx_resp)})
+        return JSONResponse(status_code=400,
+                            content={"error": str(tx_resp)})
 
 
 """
