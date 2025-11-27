@@ -1,86 +1,116 @@
-# encoding: utf-8
+# endpoints/get_hashrate.py
 import json
-
+import logging
+from datetime import datetime
 from pydantic import BaseModel
 from sqlalchemy import select
-
-from dbsession import async_session
+from constants import BPS
+from dbsession import async_session_blocks
 from endpoints import sql_db_only
 from helper import KeyValueStore
 from models.Block import Block
+from helper.difficulty_calculation import bits_to_difficulty
 from server import app, vecnod_client
 
-MAXHASH_CACHE = (0, 0)
+_logger = logging.getLogger(__name__)
 
 
 class BlockHeader(BaseModel):
-    hash: str = "e6641454e16cff4f232b899564eeaa6e480b66069d87bee6a2b2476e63fcd887"
-    timestamp: str = "1656450648874"
-    difficulty: int = 1212312312
-    daaScore: str = "19984482"
-    blueScore: str = "18483232"
-
+    hash: str
+    timestamp: str
+    difficulty: int
+    daaScore: str
+    blueScore: str
 
 class HashrateResponse(BaseModel):
-    hashrate: float = 12000132
+    hashrate: float
 
 
 class MaxHashrateResponse(BaseModel):
-    hashrate: float = 12000132
+    hashrate: float
     blockheader: BlockHeader
 
 
 @app.get("/info/hashrate", response_model=HashrateResponse | str, tags=["Vecno network info"])
 async def get_hashrate(stringOnly: bool = False):
     """
-    Returns the current hashrate for Vecno network in TH/s.
+    Returns the current hashrate for Vecno network in Mh/s.
     """
-
     resp = await vecnod_client.request("getBlockDagInfoRequest")
-    hashrate = resp["getBlockDagInfoResponse"]["difficulty"] * 2
-    hashrate_in_th = hashrate / 1_000_000_000_000
+    difficulty = resp["getBlockDagInfoResponse"]["difficulty"]
+    hashrate = difficulty * 2
+    hashrate_in_mh = hashrate / 1_000_000
 
-    if not stringOnly:
-        return {
-            "hashrate": hashrate_in_th
-        }
+    if stringOnly:
+        return f"{hashrate_in_mh:.2f}"
 
-    else:
-        return f"{hashrate_in_th:.01f}"
+    return HashrateResponse(hashrate=hashrate_in_mh)
 
 
 @app.get("/info/hashrate/max", response_model=MaxHashrateResponse, tags=["Vecno network info"])
 @sql_db_only
 async def get_max_hashrate():
     """
-    Returns the current hashrate for Vecno network in TH/s.
+    Returns the all-time highest hashrate and the block where it occurred.
     """
-    maxhash_last_value = json.loads((await KeyValueStore.get("maxhash_last_value")) or "{}")
-    maxhash_last_bluescore = int((await KeyValueStore.get("maxhash_last_bluescore")) or 0)
-    print(f"Start at {maxhash_last_bluescore}")
+    global MAXHASH_CACHE
 
-    async with async_session() as s:
-        block = (await s.execute(select(Block)
-                                 .filter(Block.blue_score > maxhash_last_bluescore)
-                                 .order_by(Block.difficulty.desc()).limit(1))).scalar()
+    cached_json = await KeyValueStore.get("maxhash_last_value")
+    cached_bluescore = int(await KeyValueStore.get("maxhash_last_bluescore") or "0")
 
-    hashrate_new = block.difficulty * 2
-    hashrate_old = maxhash_last_value.get("blockheader", {}).get("difficulty", 0) * 2
+    cached_data = json.loads(cached_json or "{}")
+    cached_hashrate = cached_data.get("hashrate", 0)
 
-    await KeyValueStore.set("maxhash_last_bluescore", str(block.blue_score))
+    async with async_session_blocks() as s:
+        result = await s.execute(
+            select(Block)
+            .where(Block.blue_score > cached_bluescore)
+            .order_by(Block.bits.asc())
+            .limit(1)
+        )
+        block = result.scalar_one_or_none()
 
-    if hashrate_new > hashrate_old:
-        response = {"hashrate":  hashrate_new / 1_000_000_000_000,
-                    "blockheader":
-                        {
-                            "hash": block.hash,
-                            "timestamp": block.timestamp.isoformat(),
-                            "difficulty": block.difficulty,
-                            "daaScore": block.daa_score,
-                            "blueScore": block.blue_score
-                        }
-                    }
-        await KeyValueStore.set("maxhash_last_value", json.dumps(response))
-        return response
+    if block:
+        current_difficulty = bits_to_difficulty(block.bits)
+        current_hashrate = current_difficulty * 2 * BPS / 1_000_000  # in MH/s
 
-    return maxhash_last_value
+        if current_hashrate > cached_hashrate:
+            timestamp_iso = datetime.fromtimestamp(block.timestamp / 1000).isoformat() if isinstance(block.timestamp, (int, float)) else block.timestamp.isoformat()
+
+            response = MaxHashrateResponse(
+                hashrate=current_hashrate,
+                blockheader=BlockHeader(
+                    hash=block.hash,
+                    timestamp=timestamp_iso,
+                    difficulty=int(current_difficulty),
+                    daaScore=str(block.daa_score or 0),
+                    blueScore=str(block.blue_score or 0),
+                )
+            )
+
+            # Update cache
+            await KeyValueStore.set("maxhash_last_value", response.model_dump_json())
+            await KeyValueStore.set("maxhash_last_bluescore", str(block.blue_score))
+
+            _logger.info(f"New max hashrate: {current_hashrate:,.2f} MH/s at blueScore {block.blue_score}")
+            return response
+
+    if cached_data:
+        return MaxHashrateResponse(**cached_data)
+
+    resp = await vecnod_client.request("getBlockDagInfoRequest")
+    difficulty = resp["getBlockDagInfoResponse"]["difficulty"]
+    hashrate_mh = difficulty * 2 / 1_000_000
+
+    fallback = MaxHashrateResponse(
+        hashrate=hashrate_mh,
+        blockheader=BlockHeader(
+            hash="0000000000000000000000000000000000000000000000000000000000000000",
+            timestamp=datetime.utcnow().isoformat(),
+            difficulty=int(difficulty),
+            daaScore="0",
+            blueScore="0",
+        )
+    )
+    await KeyValueStore.set("maxhash_last_value", fallback.model_dump_json())
+    return fallback

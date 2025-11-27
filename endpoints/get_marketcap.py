@@ -17,7 +17,7 @@ async def get_marketcap(stringOnly: bool = False):
     """
     ve_price = await get_ve_price()
     resp = await vecnod_client.request("getCoinSupplyRequest")
-    mcap = round(float(resp["getCoinSupplyResponse"]["circulatingSompi"]) / 100000000 * ve_price)
+    mcap = round(float(resp["getCoinSupplyResponse"]["circulatingVeni"]) / 100000000 * ve_price)
 
     if not stringOnly:
         return {

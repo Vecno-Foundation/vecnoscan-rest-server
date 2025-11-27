@@ -1,20 +1,31 @@
-from sqlalchemy import Column, String, BigInteger, Boolean, UniqueConstraint, Index
+from sqlalchemy import Column, BigInteger
 
+from constants import ADDRESS_PREFIX
 from dbsession import Base
+from models.type_decorators.HexColumn import HexColumn
+from models.AddressColumn import AddressColumn
 
 
 class TxAddrMapping(Base):
-    __tablename__ = 'tx_id_address_mapping'
-    transaction_id = Column(String)
-    address = Column(String)
+    __tablename__ = "addresses_transactions"
+    transaction_id = Column(HexColumn, primary_key=True)
+    address = Column(AddressColumn, primary_key=True)
     block_time = Column(BigInteger)
-    id = Column(BigInteger, primary_key=True)
-
-    __table_args__ = (UniqueConstraint('transaction_id', 'address',
-                                       name='tx_id_address_mapping_transaction_id_address_key'),)
 
 
-Index("idx_address_block_time", TxAddrMapping.address, TxAddrMapping.block_time)
-Index("idx_block_time", TxAddrMapping.block_time)
-Index("idx_tx_id", TxAddrMapping.transaction_id)
-Index("idx_tx_id_address_mapping", TxAddrMapping.transaction_id)
+class TxAddrCount(Base):
+    __tablename__ = "addresses_transactions_count"
+    address = Column(AddressColumn, primary_key=True)
+    count = Column(BigInteger)
+
+
+class TxScriptMapping(Base):
+    __tablename__ = "scripts_transactions"
+    transaction_id = Column(HexColumn, primary_key=True)
+    script_public_key = Column(HexColumn, primary_key=True)
+    block_time = Column(BigInteger)
+
+class TxScriptCount(Base):
+    __tablename__ = "scripts_transactions_count"
+    script_public_key = Column(HexColumn, primary_key=True)
+    count = Column(BigInteger)

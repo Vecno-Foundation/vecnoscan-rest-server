@@ -27,7 +27,7 @@ class HealthResponse(BaseModel):
 @app.get("/info/health", response_model=HealthResponse, tags=["Vecno network info"])
 async def health_state():
     """
-    Returns the current hashrate for Vecno network in TH/s.
+    Returns the current hashrate for Vecno network in Mh/s.
     """
     await vecnod_client.initialize_all()
 

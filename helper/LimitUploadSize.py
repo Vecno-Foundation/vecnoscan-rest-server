@@ -3,8 +3,6 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
-# from https://github.com/tiangolo/fastapi/issues/362
-
 class LimitUploadSize(BaseHTTPMiddleware):
     def __init__(self, app, max_upload_size: int) -> None:
         super().__init__(app)

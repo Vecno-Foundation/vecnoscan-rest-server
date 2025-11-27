@@ -19,9 +19,9 @@ async def get_coinsupply():
     """
     resp = await vecnod_client.request("getCoinSupplyRequest")
     return {
-        "circulatingSupply": resp["getCoinSupplyResponse"]["circulatingSompi"],
-        "totalSupply": resp["getCoinSupplyResponse"]["circulatingSompi"],
-        "maxSupply": resp["getCoinSupplyResponse"]["maxSompi"]
+        "circulatingSupply": resp["getCoinSupplyResponse"]["circulatingVeni"],
+        "totalSupply": resp["getCoinSupplyResponse"]["circulatingVeni"],
+        "maxSupply": resp["getCoinSupplyResponse"]["maxVeni"]
     }
 
 @app.get("/info/coinsupply/circulating", tags=["Vecno network info"],
@@ -31,7 +31,7 @@ async def get_circulating_coins(in_billion : bool = False):
     Get circulating amount of $VE token as numerical value
     """
     resp = await vecnod_client.request("getCoinSupplyRequest")
-    coins = str(float(resp["getCoinSupplyResponse"]["circulatingSompi"]) / 100000000)
+    coins = str(float(resp["getCoinSupplyResponse"]["circulatingVeni"]) / 100000000)
     if in_billion:
         return str(round(float(coins) / 1000000000, 2))
     else:
@@ -45,4 +45,4 @@ async def get_total_coins():
     Get total amount of $VE token as numerical value
     """
     resp = await vecnod_client.request("getCoinSupplyRequest")
-    return str(float(resp["getCoinSupplyResponse"]["circulatingSompi"]) / 100000000)
+    return str(float(resp["getCoinSupplyResponse"]["circulatingVeni"]) / 100000000)

@@ -12,11 +12,13 @@ gunicorn = "*"
 requests = "*"
 websockets = "*"
 fastapi-utils = "*"
-psycopg2 = { extras = ["async"], version = "*" }
 asyncpg = "*"
 cachetools = "*"
 aiohttp = "*"
 aiocache = "*"
+typing-inspect = "*"
 
 [requires]
-python_version = "3.10"
+python_version = "3.12"
+
+[dev-packages]
