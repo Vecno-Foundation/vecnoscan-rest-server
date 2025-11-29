@@ -385,7 +385,6 @@ async def get_transactions(block_hash: str, transaction_ids: List[str]):
                 },
                 "signatureScript": inp.signature_script,
                 "sigOpCount": inp.sig_op_count,
-                "sequence": inp.sequence,
             })
 
     for out in outputs:
