@@ -1,4 +1,3 @@
-# endpoints/get_transactions.py
 import asyncio
 import logging
 from collections import defaultdict
@@ -30,8 +29,6 @@ DESC_RESOLVE_PARAM = (
     "adds it into each TxInput."
 )
 
-
-# === Pydantic Models (Pydantic v2) ===
 class TxOutput(BaseModel):
     transaction_id: str
     index: int
@@ -118,7 +115,7 @@ def _to_millis(value) -> int | None:
     if value is None:
         return None
     if isinstance(value, int):
-        return value  # already in ms
+        return value
     return int(value.timestamp() * 1000)
 
 

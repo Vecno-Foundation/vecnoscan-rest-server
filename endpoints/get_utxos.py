@@ -1,49 +1,128 @@
-# encoding: utf-8
-
+import asyncio
 from typing import List
 
-from fastapi import Path, HTTPException
+from fastapi import Path, HTTPException, Response
 from pydantic import BaseModel
 
 from server import app, vecnod_client
 
-
 class OutpointModel(BaseModel):
-    transactionId: str = "ef62efbc2825d3ef9ec1cf9b80506876ac077b64b11a39c8ef5e028415444dc9"
+    transactionId: str
     index: int = 0
+    outpointIndex: int | None = None
 
 
 class ScriptPublicKeyModel(BaseModel):
-    scriptPublicKey: str = "20c5629ce85f6618cd3ed1ac1c99dc6d3064ed244013555c51385d9efab0d0072fac"
+    scriptPublicKey: str
 
 
-class UtxoModel(BaseModel):
-    amount: str = "11501593788",
-    scriptPublicKey: ScriptPublicKeyModel
-    blockDaaScore: str = "18867232"
+class UtxoEntryModel(BaseModel):
+    amount: str | int
+    scriptPublicKey: dict | ScriptPublicKeyModel
+    blockDaaScore: str | int
+    isCoinbase: bool = False
 
 
 class UtxoResponse(BaseModel):
-    address: str = "vecno:qqtsqwxa3q4aw968753rya4tazahmr7jyn5zu7vkncqlvk2aqlsdsah9ut65e"
+    address: str
     outpoint: OutpointModel
-    utxoEntry: UtxoModel
+    utxoEntry: UtxoEntryModel
+
+_whale_cache: dict[str, tuple[List[UtxoResponse], float]] = {}
+
+NORMAL_TTL = 60
+WHALE_THRESHOLD = 50_000
+WHALE_TTL = 86_400
 
 
-@app.get("/addresses/{vecnoAddress}/utxos", response_model=List[UtxoResponse], tags=["Vecno addresses"])
-async def get_utxos_for_address(vecnoAddress: str = Path(
-    description="Vecno address as string e.g. vecno:qqtsqwxa3q4aw968753rya4tazahmr7jyn5zu7vkncqlvk2aqlsdsah9ut65e",
-    regex="^vecno\:[a-z0-9]{61,64}$")):
-    """
-    Lists all open utxo for a given vecno address
-    """
-    resp = await vecnod_client.request("getUtxosByAddressesRequest",
-                                       params={
-                                           "addresses": [vecnoAddress]
-                                       }, timeout=120)
+def _normalize_utxo(raw: dict, target_address: str) -> UtxoResponse | None:
+    if raw.get("address") != target_address:
+        return None
+
+    outpoint_raw = raw.get("outpoint", {})
+    idx = outpoint_raw.get("index") or outpoint_raw.get("outpointIndex", 0)
+
+    utxo_entry = raw.get("utxoEntry", {})
+    spk = utxo_entry.get("scriptPublicKey", {})
+    if isinstance(spk, dict):
+        spk_str = spk.get("scriptPublicKey", "")
+    else:
+        spk_str = str(spk)
+
+    spk_str = spk_str.lstrip("0")
+    if len(spk_str) % 2 == 1:
+        spk_str = "0" + spk_str
+    if not spk_str:
+        spk_str = "00"
+
+    return UtxoResponse(
+        address=target_address,
+        outpoint=OutpointModel(
+            transactionId=outpoint_raw.get("transactionId", ""),
+            index=idx
+        ),
+        utxoEntry=UtxoEntryModel(
+            amount=str(utxo_entry.get("amount", "0")),
+            scriptPublicKey=ScriptPublicKeyModel(scriptPublicKey=spk_str),
+            blockDaaScore=str(utxo_entry.get("blockDaaScore", "0")),
+            isCoinbase=utxo_entry.get("isCoinbase", False)
+        )
+    )
+
+
+@app.get(
+    "/addresses/{vecnoAddress}/utxos",
+    response_model=List[UtxoResponse],
+    tags=["Vecno addresses"]
+)
+async def get_utxos_for_address(
+    vecnoAddress: str = Path(regex=r"^vecno:[a-z0-9]{61,64}$"),
+    response: Response = None,
+):
+    now = asyncio.get_event_loop().time()
+
+    if vecnoAddress in _whale_cache:
+        cached_data, ts = _whale_cache[vecnoAddress]
+        age = now - ts
+        ttl_to_use = WHALE_TTL if len(cached_data) >= WHALE_THRESHOLD else NORMAL_TTL
+        if age < ttl_to_use:
+            response.headers["X-Cache"] = "HIT"
+            response.headers["Cache-Control"] = f"public, max-age={ttl_to_use}"
+            if len(cached_data) >= WHALE_THRESHOLD:
+                response.headers["X-Whale"] = "true"
+            return cached_data
     try:
-        return (utxo for utxo in resp["getUtxosByAddressesResponse"]["entries"] if utxo["address"] == vecnoAddress)
-    except KeyError:
-        if "getUtxosByAddressesResponse" in resp and "error" in resp["getUtxosByAddressesResponse"]:
-            raise HTTPException(status_code=400, detail=resp["getUtxosByAddressesResponse"]["error"])
-        else:
-            return []
+        raw = await asyncio.wait_for(
+            vecnod_client.request(
+                "getUtxosByAddressesRequest",
+                {"addresses": [vecnoAddress]},
+                timeout=90
+            ),
+            timeout=9.0
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail="Address has extreme number of UTXOs — request timed out after 9s. Using cached data if available."
+        )
+
+    entries = raw.get("getUtxosByAddressesResponse", {}).get("entries", [])
+    result = [u for u in (_normalize_utxo(e, vecnoAddress) for e in entries) if u is not None]
+    count = len(result)
+
+    if count >= WHALE_THRESHOLD:
+        ttl = WHALE_TTL
+        response.headers["Cache-Control"] = f"public, max-age={ttl}"
+        response.headers["X-Whale"] = "true"
+        response.headers["X-UTXO-Count"] = str(count)
+    else:
+        ttl = NORMAL_TTL
+        response.headers["Cache-Control"] = "public, max-age=8"
+
+    _whale_cache[vecnoAddress] = (result, now)
+
+    if len(_whale_cache) > 300:
+        oldest = min(_whale_cache.items(), key=lambda x: x[1][1])[0]
+        del _whale_cache[oldest]
+
+    return result
