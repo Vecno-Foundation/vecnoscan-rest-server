@@ -30,7 +30,7 @@ class UtxoResponse(BaseModel):
 
 _whale_cache: dict[str, tuple[List[UtxoResponse], float]] = {}
 
-NORMAL_TTL = 60
+NORMAL_TTL = 300
 WHALE_THRESHOLD = 50_000
 WHALE_TTL = 86_400
 
@@ -98,12 +98,12 @@ async def get_utxos_for_address(
                 {"addresses": [vecnoAddress]},
                 timeout=90
             ),
-            timeout=9.0
+            timeout=10.0
         )
     except asyncio.TimeoutError:
         raise HTTPException(
             status_code=503,
-            detail="Address has extreme number of UTXOs — request timed out after 9s. Using cached data if available."
+            detail="Address has extreme number of UTXOs — request timed out after 10s. Using cached data if available."
         )
 
     entries = raw.get("getUtxosByAddressesResponse", {}).get("entries", [])
