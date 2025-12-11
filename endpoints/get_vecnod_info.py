@@ -14,7 +14,7 @@ class vecnodInfoResponse(BaseModel):
     p2pIdHashed : str = "36a17cd8644eef34fc7fe4719655e06dbdf117008900c46975e66c35acd09b01"
 
 
-@app.get("/info/vecnod", response_model=vecnodInfoResponse, tags=["Vecno Network info"])
+@app.get("/info/vecnod", response_model=vecnodInfoResponse, tags=["Vecno network info"])
 async def get_vecnod_info():
     """
     Get some information for vecnod instance, which is currently connected.

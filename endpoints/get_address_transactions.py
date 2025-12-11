@@ -194,12 +194,11 @@ async def get_transaction_count_for_address(
 
     return TransactionCount(total=tx_count.scalar())
 
-@app.get("/stats/transactions", tags=["Stats", "Vecno network"])
+@app.get("/stats/transactions", tags=["Stats"])
 @sql_db_only
 async def get_total_transaction_count():
     """
     Returns the exact total number of transactions on the Vecno network.
-    100% real data — no estimation, no fallback.
     """
     async with async_session() as session:
         # Total transactions

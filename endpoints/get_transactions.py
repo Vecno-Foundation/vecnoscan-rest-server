@@ -6,10 +6,10 @@ from typing import List, Optional, Dict
 
 from fastapi import Path, HTTPException, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from starlette.responses import Response
-
-from constants import TX_SEARCH_ID_LIMIT, TX_SEARCH_BS_LIMIT, PREV_OUT_RESOLVED
+from typing import Annotated
+from constants import TX_SEARCH_ID_LIMIT, TX_SEARCH_BS_LIMIT, PREV_OUT_RESOLVED, ADDRESS_PREFIX
 from dbsession import async_session, async_session_blocks
 from endpoints import filter_fields, sql_db_only
 from endpoints.get_blocks import get_block_from_vecnod
@@ -107,6 +107,17 @@ class PreviousOutpointLookupMode(str, Enum):
 class AcceptanceMode(str, Enum):
     accepted = "accepted"
     rejected = "rejected"
+
+
+class WhaleMovementResponse(BaseModel):
+    transaction_id: str
+    block_time: int
+    amount: int
+    from_address: Optional[str] = None
+    to_address: str
+
+    model_config = {"from_attributes": True}
+
 
 
 # === Helpers ===
@@ -250,6 +261,81 @@ async def get_transaction_from_vecnod(
         }
     return None
 
+
+@app.get(
+    "/transactions/whale-movements",
+    response_model=List[WhaleMovementResponse],
+    tags=["Vecno transactions"],
+    summary="Get Recent Large Transfers",
+    description="Returns up to 200 recent large transfers.",
+)
+@sql_db_only
+async def get_whale_movements(
+    response: Response,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    min_ve: Annotated[int, Query(ge=1, le=100000)] = 1000,
+):
+    min_amount_sompi = min_ve * 100_000_000
+
+    whale_sql = text("""
+        WITH large_outputs AS (
+            SELECT DISTINCT ON (o.transaction_id)
+                encode(o.transaction_id, 'hex') AS transaction_id,
+                o.amount,
+                o.script_public_key_address AS to_address,
+                t.block_time
+            FROM transactions_outputs o
+            JOIN transactions t ON o.transaction_id = t.transaction_id
+            WHERE o.amount >= :min_amount
+              AND t.block_time IS NOT NULL
+            ORDER BY o.transaction_id, o.amount DESC
+            LIMIT :limit * 5
+        ),
+        sender_lookup AS (
+            SELECT DISTINCT ON (encode(i.transaction_id, 'hex'))
+                encode(i.transaction_id, 'hex') AS transaction_id,
+                po.script_public_key_address AS from_address
+            FROM transactions_inputs i
+            JOIN transactions_outputs po
+                ON i.previous_outpoint_hash = po.transaction_id
+               AND i.previous_outpoint_index = po.index
+            WHERE encode(i.transaction_id, 'hex') IN (SELECT transaction_id FROM large_outputs)
+            ORDER BY encode(i.transaction_id, 'hex'), po.amount DESC NULLS LAST
+        )
+        SELECT 
+            lo.transaction_id,
+            lo.block_time,
+            lo.amount,
+            sl.from_address,
+            lo.to_address
+        FROM large_outputs lo
+        LEFT JOIN sender_lookup sl ON lo.transaction_id = sl.transaction_id
+        ORDER BY lo.amount DESC, lo.block_time DESC
+        LIMIT :limit;
+    """)
+
+    async with async_session() as s:
+        result = await s.execute(
+            whale_sql,
+            {"min_amount": min_amount_sompi, "limit": limit}
+        )
+        rows = result.all()
+
+    movements = []
+    for row in rows:
+        from_addr = f"{ADDRESS_PREFIX}:{row.from_address}" if row.from_address else None
+        to_addr = f"{ADDRESS_PREFIX}:{row.to_address}" if row.to_address else None
+
+        movements.append({
+            "transaction_id": row.transaction_id,
+            "block_time": row.block_time or 0,
+            "amount": row.amount,
+            "from_address": from_addr,
+            "to_address": to_addr,
+        })
+
+    response.headers["Cache-Control"] = "public, max-age=8, stale-while-revalidate=20"
+    return movements
 
 @app.get(
     "/transactions/{transactionId}",
