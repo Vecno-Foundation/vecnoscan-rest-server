@@ -121,6 +121,19 @@ class WhaleMovementResponse(BaseModel):
 
 
 # === Helpers ===
+
+def with_address_prefix(address: Optional[str]) -> Optional[str]:
+    """
+    Adds the network-specific address prefix if the address is present and doesn't already have it.
+    Returns None if address is None or empty.
+    """
+    if not address:
+        return None
+    if address.startswith(f"{ADDRESS_PREFIX}:"):
+        return address
+    return f"{ADDRESS_PREFIX}:{address}"
+
+
 def _to_millis(value) -> int | None:
     """Safely convert timestamp to milliseconds (handles int or datetime)"""
     if value is None:
@@ -323,15 +336,12 @@ async def get_whale_movements(
 
     movements = []
     for row in rows:
-        from_addr = f"{ADDRESS_PREFIX}:{row.from_address}" if row.from_address else None
-        to_addr = f"{ADDRESS_PREFIX}:{row.to_address}" if row.to_address else None
-
         movements.append({
             "transaction_id": row.transaction_id,
             "block_time": row.block_time or 0,
             "amount": row.amount,
-            "from_address": from_addr,
-            "to_address": to_addr,
+            "from_address": with_address_prefix(row.from_address),
+            "to_address": with_address_prefix(row.to_address),
         })
 
     response.headers["Cache-Control"] = "public, max-age=8, stale-while-revalidate=20"
