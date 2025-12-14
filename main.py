@@ -6,7 +6,7 @@ from starlette.responses import RedirectResponse
 
 from endpoints import get_balance, get_fee_estimate, get_utxos, get_blocks, get_blockdag, get_circulating_supply, get_vecnod_info, \
     get_network, get_price
-from endpoints.get_address_transactions import get_transactions_for_address
+from endpoints.get_address_transactions import get_transactions_for_address, get_recent_transaction_count
 from endpoints.get_blockreward import get_blockreward
 from endpoints.get_halving import get_halving
 from endpoints.get_hashrate import get_hashrate
@@ -25,7 +25,7 @@ print(
     f"Loaded: {get_balance}, {get_utxos}, {get_blocks}, {get_blockdag}, {get_circulating_supply}, "
     f"{get_vecnod_info}, {get_fee_estimate}, {get_network}, {get_marketcap}, {get_hashrate}, {get_blockreward}"
     f"{get_halving} {health_state}  {get_whale_movements} {get_transaction}"
-    f"{get_virtual_selected_parent_blue_score} {get_transactions_for_address}"
+    f"{get_virtual_selected_parent_blue_score} {get_transactions_for_address} {get_recent_transaction_count}"
     f"{submit_a_new_transaction} {get_price}")
 
 if os.getenv('VSPC_REQUEST') == 'true':

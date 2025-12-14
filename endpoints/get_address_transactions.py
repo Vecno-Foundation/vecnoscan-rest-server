@@ -2,15 +2,16 @@
 from enum import Enum
 from typing import List
 import asyncio
+import time
 from fastapi import Path, Query, Response, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text, func, or_
 from sqlalchemy.future import select
-from models.Transaction import Transaction 
 from dbsession import async_session
 from endpoints import sql_db_only
 from endpoints.get_transactions import search_for_transactions, TxSearch, TxModel
 from models.TxAddrMapping import TxAddrMapping
+from models.TransactionAcceptance import TransactionAcceptance
 from server import app
 
 DESC_RESOLVE_PARAM = "Use this parameter if you want to fetch the TransactionInput previous outpoint details." \
@@ -201,11 +202,9 @@ async def get_total_transaction_count():
     Returns the exact total number of transactions on the Vecno network.
     """
     async with async_session() as session:
-        # Total transactions
         total_result = await session.execute(text("SELECT COUNT(*) FROM transactions"))
-        total = total_result.scalar_one()  # raises if null/no rows
+        total = total_result.scalar_one()
 
-        # Coinbase transactions
         coinbase_result = await session.execute(
             text("SELECT COUNT(*) FROM transactions WHERE subnetwork_id = '0000000000000000000000000000000000000000'")
         )
@@ -216,9 +215,45 @@ async def get_total_transaction_count():
         return {
             "total": int(total),
             "regular": int(regular),
-            "coinbase": int(coinbase),
-            "timestamp": int(asyncio.get_event_loop().time() * 1000),
-        }
+            "timestamp": int(time.time() * 1000),
+        }   
+
+@app.get(
+    "/stats/transactions/recent-count",
+    tags=["Stats"],
+    summary="Number of accepted transactions in the last 24 hours",
+    description="Returns the count of transactions accepted in blocks "
+                "with timestamp within the last 24 hours."
+)
+@sql_db_only
+async def get_recent_transaction_count(response: Response):
+    now_ms = int(time.time() * 1000)
+    twenty_four_hours_ago_ms = now_ms - 24 * 3600 * 1000
+
+    async with async_session() as s:
+        result = await s.execute(text("""
+            SELECT COUNT(*) 
+            FROM transactions_acceptances ta
+            JOIN blocks b ON ta.block_hash = b.hash
+            WHERE b.timestamp >= :start_time
+              AND NOT EXISTS (
+                  SELECT 1 
+                  FROM transactions t 
+                  WHERE t.transaction_id = ta.transaction_id 
+                    AND t.subnetwork_id = '0000000000000000000000000000000000000000'
+              )
+        """), {"start_time": twenty_four_hours_ago_ms})
+
+        count = result.scalar() or 0
+
+    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=120"
+
+    return {
+        "transactions_last_24h": int(count),
+        "period_start_timestamp_ms": twenty_four_hours_ago_ms,
+        "period_end_timestamp_ms": now_ms,
+        "generated_at_ms": now_ms,
+    }
     
 @app.get(
     "/addresses/{vecnoAddress}/full-transactions-page",
