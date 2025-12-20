@@ -115,6 +115,7 @@ class WhaleMovementResponse(BaseModel):
     amount: int
     from_address: Optional[str] = None
     to_address: str
+    index: int
 
     model_config = {"from_attributes": True}
 
@@ -292,8 +293,9 @@ async def get_whale_movements(
 
     whale_sql = text("""
         WITH large_outputs AS (
-            SELECT DISTINCT ON (o.transaction_id)
+            SELECT
                 encode(o.transaction_id, 'hex') AS transaction_id,
+                o.index AS output_index,
                 o.amount,
                 o.script_public_key_address AS to_address,
                 t.block_time
@@ -301,8 +303,8 @@ async def get_whale_movements(
             JOIN transactions t ON o.transaction_id = t.transaction_id
             WHERE o.amount >= :min_amount
               AND t.block_time IS NOT NULL
-            ORDER BY o.transaction_id, o.amount DESC
-            LIMIT :limit * 5
+            ORDER BY t.block_time DESC, o.index ASC
+            LIMIT :limit * 10
         ),
         sender_lookup AS (
             SELECT DISTINCT ON (encode(i.transaction_id, 'hex'))
@@ -317,13 +319,14 @@ async def get_whale_movements(
         )
         SELECT 
             lo.transaction_id,
+            lo.output_index AS index,
             lo.block_time,
             lo.amount,
             sl.from_address,
             lo.to_address
         FROM large_outputs lo
         LEFT JOIN sender_lookup sl ON lo.transaction_id = sl.transaction_id
-        ORDER BY lo.amount DESC, lo.block_time DESC
+        ORDER BY lo.block_time DESC, lo.output_index ASC
         LIMIT :limit;
     """)
 
@@ -335,14 +338,18 @@ async def get_whale_movements(
         rows = result.all()
 
     movements = []
+    recent_timestamp = None
     for row in rows:
-        movements.append({
-            "transaction_id": row.transaction_id,
-            "block_time": row.block_time or 0,
-            "amount": row.amount,
-            "from_address": with_address_prefix(row.from_address),
-            "to_address": with_address_prefix(row.to_address),
-        })
+        movements.append(WhaleMovementResponse(
+            transaction_id=row.transaction_id,
+            block_time=row.block_time or 0,
+            amount=row.amount,
+            from_address=with_address_prefix(row.from_address),
+            to_address=with_address_prefix(row.to_address),
+            index=row.index,
+        ))
+        if recent_timestamp is None and row.block_time:
+            recent_timestamp = row.block_time
 
     response.headers["Cache-Control"] = "public, max-age=8, stale-while-revalidate=20"
     return movements
