@@ -37,7 +37,7 @@ def csv_generator(balances):
 async def get_balance_from_vecno_address(
         vecnoAddress: str = Path(
             description="Vecno address as string e.g. vecno:qqtsqwxa3q4aw968753rya4tazahmr7jyn5zu7vkncqlvk2aqlsdsah9ut65e",
-            regex="^vecno\:[a-z0-9]{61,63}$")):
+            regex=r"^vecno\:[a-z0-9]{61,63}$")):
     """
     Get balance for a given vecno address
     """
