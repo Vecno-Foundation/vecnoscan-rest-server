@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 from constants import BPS
 from dbsession import async_session_blocks
 from endpoints import sql_db_only
@@ -22,6 +22,7 @@ class BlockHeader(BaseModel):
     daaScore: str
     blueScore: str
 
+
 class HashrateResponse(BaseModel):
     hashrate: float
 
@@ -29,6 +30,16 @@ class HashrateResponse(BaseModel):
 class MaxHashrateResponse(BaseModel):
     hashrate: float
     blockheader: BlockHeader
+
+
+class HashratePoint(BaseModel):
+    timestamp: str  # ISO 8601
+    blueScore: int
+    hashrate: float  # in MH/s
+
+
+class HashrateHistoryResponse(BaseModel):
+    data: list[HashratePoint]
 
 
 @app.get("/info/hashrate", response_model=HashrateResponse | str, tags=["Vecno network info"])
@@ -114,3 +125,68 @@ async def get_max_hashrate():
     )
     await KeyValueStore.set("maxhash_last_value", fallback.model_dump_json())
     return fallback
+
+
+@app.get("/info/hashrate/history", response_model=HashrateHistoryResponse, tags=["Vecno network info"])
+@sql_db_only
+async def get_hashrate_history():
+    """
+    Returns hashrate history with one data point every 10 minutes for the last 7 days.
+    Optimized for block explorer charts: time-aligned, efficient, and smooth.
+    """
+    interval_minutes = 10
+    days = 7
+
+    # Cutoff: 7 days ago in milliseconds
+    cutoff_timestamp_ms = int(datetime.utcnow().timestamp() * 1000) - (days * 24 * 60 * 60 * 1000)
+
+    async with async_session_blocks() as s:
+        # Bucket timestamps into 10-minute intervals
+        bucket_size_ms = interval_minutes * 60 * 1000
+        bucket_expr = (Block.timestamp // bucket_size_ms) * bucket_size_ms
+
+        # Subquery: get the latest block (highest blue_score) in each bucket
+        subq = (
+            select(
+                bucket_expr.label("bucket_start"),
+                func.max(Block.blue_score).label("max_blue_score")
+            )
+            .where(Block.timestamp >= cutoff_timestamp_ms)
+            .group_by("bucket_start")
+            .subquery()
+        )
+
+        # Main query: join to get full block details, ordered chronologically
+        stmt = (
+            select(Block)
+            .join(
+                subq,
+                (Block.blue_score == subq.c.max_blue_score) &
+                (Block.timestamp >= cutoff_timestamp_ms)
+            )
+            .order_by(Block.timestamp.asc())
+        )
+
+        result = await s.execute(stmt)
+        blocks = result.scalars().all()
+
+    data_points = []
+    for block in blocks:
+        difficulty = bits_to_difficulty(block.bits)
+        hashrate_mh = difficulty * 2 * BPS / 1_000_000
+
+        timestamp_iso = (
+            datetime.fromtimestamp(block.timestamp / 1000).isoformat()
+            if isinstance(block.timestamp, (int, float))
+            else block.timestamp.isoformat()
+        )
+
+        data_points.append(
+            HashratePoint(
+                timestamp=timestamp_iso,
+                blueScore=block.blue_score,
+                hashrate=round(hashrate_mh, 2)
+            )
+        )
+
+    return HashrateHistoryResponse(data=data_points)
