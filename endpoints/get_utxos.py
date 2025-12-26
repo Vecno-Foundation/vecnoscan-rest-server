@@ -76,7 +76,7 @@ def _normalize_utxo(raw: dict, target_address: str) -> UtxoResponse | None:
     tags=["Vecno addresses"]
 )
 async def get_utxos_for_address(
-    vecnoAddress: str = Path(regex=r"^vecno:[a-z0-9]{61,64}$"),
+    vecnoAddress: str = Path(pattern=r"^vecno:[a-z0-9]{61,64}$"),
     response: Response = None,
 ):
     now = asyncio.get_event_loop().time()

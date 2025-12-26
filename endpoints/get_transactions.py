@@ -363,7 +363,7 @@ async def get_whale_movements(
 @sql_db_only
 async def get_transaction(
     response: Response,
-    transactionId: str = Path(regex="[a-f0-9]{64}"),
+    transactionId: str = Path(pattern="[a-f0-9]{64}"),
     blockHash: Optional[str] = Query(None, description="Specify a containing block (if known) for faster lookup"),
     inputs: bool = True,
     outputs: bool = True,

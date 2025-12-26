@@ -193,7 +193,7 @@ async def get_block_color_from_db(block: dict) -> str | None:
 @app.get("/blocks/{blockId}", response_model=BlockModel, tags=["Vecno blocks"])
 async def get_block(
     response: Response,
-    blockId: str = Path(regex="[a-f0-9]{64}"),
+    blockId: str = Path(pattern="[a-f0-9]{64}"),
     includeTransactions: bool = True,
     includeColor: bool = False,
 ):
@@ -229,7 +229,7 @@ async def get_block(
 @app.get("/blocks", response_model=BlockResponse, tags=["Vecno blocks"])
 async def get_blocks(
     response: Response,
-    lowHash: str = Query(regex="[a-f0-9]{64}"),
+    lowHash: str = Query(pattern="[a-f0-9]{64}"),
     includeBlocks: bool = False,
     includeTransactions: bool = False,
 ):

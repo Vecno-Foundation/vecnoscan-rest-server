@@ -31,4 +31,4 @@ match NETWORK_TYPE:
 ADDRESS_PREFIX = address_prefix
 ADDRESS_EXAMPLE = address_example
 
-REGEX_VECNO_ADDRESS = "^" + ADDRESS_PREFIX + ":[a-z0-9]{61,63}$"
+PATTERN_VECNO_ADDRESS = "^" + ADDRESS_PREFIX + ":[a-z0-9]{61,63}$"

@@ -49,7 +49,7 @@ async def get_transactions_for_address(
         vecnoAddress: str = Path(
             description="Vecno address as string e.g. "
                         "vecno:qqtsqwxa3q4aw968753rya4tazahmr7jyn5zu7vkncqlvk2aqlsdsah9ut65e",
-            regex=r"^vecno\:[a-z0-9]{61,63}$")):
+            pattern=r"^vecno\:[a-z0-9]{61,63}$")):
     """
     Get all transactions for a given address from database
     """
@@ -94,7 +94,7 @@ async def get_full_transactions_for_address(
         vecnoAddress: str = Path(
             description="Vecno address as string e.g. "
                         "vecno:qqtsqwxa3q4aw968753rya4tazahmr7jyn5zu7vkncqlvk2aqlsdsah9ut65e",
-            regex=r"^vecno\:[a-z0-9]{61,63}$"),
+            pattern=r"^vecno\:[a-z0-9]{61,63}$"),
         limit: int = Query(
             description="The number of records to get",
             ge=1,
@@ -139,7 +139,7 @@ async def get_full_transactions_for_address_paged(
         vecnoAddress: str = Path(
             description="Vecno address as string e.g. "
                         "vecno:qqtsqwxa3q4aw968753rya4tazahmr7jyn5zu7vkncqlvk2aqlsdsah9ut65e",
-            regex=r"^vecno\:[a-z0-9]{61,63}$"),
+            pattern=r"^vecno\:[a-z0-9]{61,63}$"),
         page: int = Query(
             description="Page number (1-based)",
             ge=1,
@@ -182,7 +182,7 @@ async def get_transaction_count_for_address(
         vecnoAddress: str = Path(
             description="Vecno address as string e.g. "
                         "vecno:qqtsqwxa3q4aw968753rya4tazahmr7jyn5zu7vkncqlvk2aqlsdsah9ut65e",
-            regex=r"^vecno\:[a-z0-9]{61,63}$")
+            pattern=r"^vecno\:[a-z0-9]{61,63}$")
 ):
     """
     Count the number of transactions associated with this address
@@ -266,7 +266,7 @@ async def get_full_transactions_for_address_page(
     response: Response,
     vecnoAddress: str = Path(
         description="Vecno address e.g. vecno:qrh6mye34yxkpwefh8n5rx9dq7rngzy5eedrth4mdqjp9qj4g209w29u2telh",
-        regex=r"^vecno\:[a-z0-9]{61,63}$"
+        pattern=r"^vecno\:[a-z0-9]{61,63}$"
     ),
     limit: int = Query(ge=1, le=500, default=50, description="Max records per page"),
     before: int = Query(ge=0, default=0, description="Only txs before this timestamp (ms)"),
