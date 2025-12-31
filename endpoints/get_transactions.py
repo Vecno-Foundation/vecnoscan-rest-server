@@ -281,15 +281,17 @@ async def get_transaction_from_vecnod(
     response_model=List[WhaleMovementResponse],
     tags=["Vecno transactions"],
     summary="Get Recent Large Transfers",
-    description="Returns up to 200 recent large transfers.",
+    description="Returns up to 200 recent large transfers (excluding coinbase/mining rewards).",
 )
 @sql_db_only
 async def get_whale_movements(
     response: Response,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
-    min_ve: Annotated[int, Query(ge=1, le=100000)] = 1000,
+    min_ve: Annotated[int, Query(ge=1, le=100000)] = 10000,
 ):
-    min_amount_sompi = min_ve * 100_000_000
+    min_amount_veni = min_ve * 100_000_000
+
+    over_fetch = limit * 10
 
     whale_sql = text("""
         WITH large_outputs AS (
@@ -303,42 +305,40 @@ async def get_whale_movements(
             JOIN transactions t ON o.transaction_id = t.transaction_id
             WHERE o.amount >= :min_amount
               AND t.block_time IS NOT NULL
-            ORDER BY t.block_time DESC, o.index ASC
-            LIMIT :limit * 10
-        ),
-        sender_lookup AS (
-            SELECT DISTINCT ON (encode(i.transaction_id, 'hex'))
-                encode(i.transaction_id, 'hex') AS transaction_id,
-                po.script_public_key_address AS from_address
-            FROM transactions_inputs i
-            JOIN transactions_outputs po
-                ON i.previous_outpoint_hash = po.transaction_id
-               AND i.previous_outpoint_index = po.index
-            WHERE encode(i.transaction_id, 'hex') IN (SELECT transaction_id FROM large_outputs)
-            ORDER BY encode(i.transaction_id, 'hex'), po.amount DESC NULLS LAST
+            ORDER BY t.block_time DESC, o.transaction_id, o.index
+            LIMIT :over_fetch
         )
         SELECT 
             lo.transaction_id,
             lo.output_index AS index,
             lo.block_time,
             lo.amount,
-            sl.from_address,
+            MAX(po.amount) AS max_input_amount,
+            po.script_public_key_address AS from_address,
             lo.to_address
         FROM large_outputs lo
-        LEFT JOIN sender_lookup sl ON lo.transaction_id = sl.transaction_id
-        ORDER BY lo.block_time DESC, lo.output_index ASC
+        JOIN transactions_inputs i 
+          ON encode(i.transaction_id, 'hex') = lo.transaction_id
+        JOIN transactions_outputs po
+          ON i.previous_outpoint_hash = po.transaction_id
+         AND i.previous_outpoint_index = po.index
+        WHERE lo.amount >= :min_amount
+        GROUP BY lo.transaction_id, lo.output_index, lo.block_time, lo.amount, lo.to_address, po.script_public_key_address
+        HAVING MAX(po.amount) IS NOT NULL
+        ORDER BY lo.block_time DESC, 
+                 MAX(po.amount) DESC,
+                 lo.output_index ASC
         LIMIT :limit;
     """)
 
     async with async_session() as s:
         result = await s.execute(
             whale_sql,
-            {"min_amount": min_amount_sompi, "limit": limit}
+            {"min_amount": min_amount_veni, "over_fetch": over_fetch, "limit": limit}
         )
         rows = result.all()
 
     movements = []
-    recent_timestamp = None
     for row in rows:
         movements.append(WhaleMovementResponse(
             transaction_id=row.transaction_id,
@@ -348,8 +348,6 @@ async def get_whale_movements(
             to_address=with_address_prefix(row.to_address),
             index=row.index,
         ))
-        if recent_timestamp is None and row.block_time:
-            recent_timestamp = row.block_time
 
     response.headers["Cache-Control"] = "public, max-age=8, stale-while-revalidate=20"
     return movements
