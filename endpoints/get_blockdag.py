@@ -1,5 +1,5 @@
 # encoding: utf-8
-from typing import List
+from typing import List, Dict
 
 from pydantic import BaseModel
 
@@ -25,3 +25,24 @@ async def get_blockdag():
     """
     resp = await vecnod_client.request("getBlockDagInfoRequest")
     return resp["getBlockDagInfoResponse"]
+
+class VirtualDaaScoreResponse(BaseModel):
+    """Response model containing only the virtual DAA score"""
+    virtualDaaScore: str
+
+
+@app.get(
+    "/info/virtual-daa-score",
+    response_model=VirtualDaaScoreResponse,
+    tags=["Vecno network info"],
+    summary="Get current virtual DAA score",
+    description="Returns only the virtualDaaScore from the Vecno BlockDAG information."
+)
+async def get_virtual_daa_score() -> Dict[str, str]:
+    """
+    Get only the virtual DAA score from the Vecno node.
+    """
+    resp = await vecnod_client.request("getBlockDagInfoRequest")
+    virtual_daa_score = resp["getBlockDagInfoResponse"]["virtualDaaScore"]
+    
+    return {"virtualDaaScore": virtual_daa_score}

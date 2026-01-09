@@ -22,7 +22,7 @@ from server import app, vecnod_client
 IS_SQL_DB_CONFIGURED = os.getenv("SQL_URI") is not None
 
 print(
-    f"Loaded: {get_balance}, {get_utxos}, {get_blocks}, {get_blockdag}, {get_circulating_supply}, "
+    f"Loaded: {get_balance}, {get_utxos}, {get_blocks}, {get_blockdag}, {get_circulating_supply}"
     f"{get_vecnod_info}, {get_fee_estimate}, {get_network}, {get_marketcap}, {get_hashrate}, {get_blockreward}"
     f"{get_halving} {health_state}  {get_whale_movements} {get_transaction}"
     f"{get_virtual_selected_parent_blue_score} {get_transactions_for_address} {get_recent_transaction_count}"
