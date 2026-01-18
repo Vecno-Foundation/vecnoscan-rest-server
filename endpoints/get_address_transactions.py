@@ -1,17 +1,25 @@
 # encoding: utf-8
 from enum import Enum
-from typing import List
+from typing import List, Optional
 import asyncio
 import time
 from fastapi import Path, Query, Response, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import text, func, or_
+from sqlalchemy import text, func, or_, exists
 from sqlalchemy.future import select
 from dbsession import async_session
 from endpoints import sql_db_only
-from endpoints.get_transactions import search_for_transactions, TxSearch, TxModel
+from endpoints.get_transactions import (
+    search_for_transactions,
+    TxSearch,
+    TxModel,
+    PreviousOutpointLookupMode,
+    AcceptanceMode,
+)
 from models.TxAddrMapping import TxAddrMapping
 from models.TransactionAcceptance import TransactionAcceptance
+from helper.utils import add_cache_control
+from constants import ADDRESS_EXAMPLE, PATTERN_VECNO_ADDRESS, GENESIS_MS
 from server import app
 
 DESC_RESOLVE_PARAM = "Use this parameter if you want to fetch the TransactionInput previous outpoint details." \
@@ -259,87 +267,143 @@ async def get_recent_transaction_count(response: Response):
     "/addresses/{vecnoAddress}/full-transactions-page",
     response_model=List[TxModel],
     response_model_exclude_unset=True,
-    tags=["Vecno addresses"]
+    tags=["Vecno addresses"],
+    openapi_extra={"strict_query_params": True},
 )
 @sql_db_only
 async def get_full_transactions_for_address_page(
     response: Response,
-    vecnoAddress: str = Path(
-        description="Vecno address e.g. vecno:qrh6mye34yxkpwefh8n5rx9dq7rngzy5eedrth4mdqjp9qj4g209w29u2telh",
-        pattern=r"^vecno\:[a-z0-9]{61,63}$"
+    vecno_address: str = Path(
+        ...,
+        alias="vecnoAddress",
+        description=f"Vecno address as string e.g. {ADDRESS_EXAMPLE}",
+        pattern=PATTERN_VECNO_ADDRESS
     ),
-    limit: int = Query(ge=1, le=500, default=50, description="Max records per page"),
-    before: int = Query(ge=0, default=0, description="Only txs before this timestamp (ms)"),
-    after: int = Query(ge=0, default=0, description="Only txs after this timestamp (ms)"),
+    limit: int = Query(
+        description=(
+            "The max number of records to get. "
+            "For paging combine with using 'before/after' from oldest previous result. "
+            "Use value of X-Next-Page-Before/-After as long as header is present to continue paging. "
+            "The actual number of transactions returned for each page can be != limit."
+        ),
+        ge=1,
+        le=500,
+        default=50,
+    ),
+    before: int = Query(
+        description="Only include transactions with block time before this (epoch-millis)",
+        ge=0,
+        default=0
+    ),
+    after: int = Query(
+        description="Only include transactions with block time after this (epoch-millis)",
+        ge=0,
+        default=0
+    ),
     fields: str = "",
     resolve_previous_outpoints: PreviousOutpointLookupMode = Query(default="no", description=DESC_RESOLVE_PARAM),
+    acceptance: Optional[AcceptanceMode] = Query(default=None),
 ):
     """
-    Paginated full transactions for address with proper X-Next-Page headers.
-    Exact same logic as KaspaScan — now working perfectly.
+    Get all transactions for a given address from database
+    and then return their full transaction data with pagination support.
     """
-    if before and after:
-        raise HTTPException(status_code=400, detail="Cannot use both 'before' and 'after'")
 
-    # Base query
-    query = select(TxAddrMapping.transaction_id, TxAddrMapping.block_time) \
-        .filter(TxAddrMapping.address == vecnoAddress) \
-        .limit(limit + 100)  # extra buffer to avoid gaps
+    query = (
+        select(TxAddrMapping.transaction_id, TxAddrMapping.block_time)
+        .filter(TxAddrMapping.address == vecno_address)
+        .limit(limit)
+    )
 
-    if before:
-        query = query.filter(TxAddrMapping.block_time < before) \
-                     .order_by(TxAddrMapping.block_time.desc())
-    elif after:
-        query = query.filter(TxAddrMapping.block_time > after) \
-                     .order_by(TxAddrMapping.block_time.asc())
+    response.headers["X-Page-Count"] = "0"
+
+    if before != 0 and after != 0:
+        raise HTTPException(status_code=400, detail="Only one of [before, after] can be present")
+
+    if before != 0:
+        if before <= GENESIS_MS:
+            return []
+        query = query.filter(TxAddrMapping.block_time < before).order_by(TxAddrMapping.block_time.desc())
+
+    elif after != 0:
+        if after > int(time.time() * 1000) + 3600000:
+            return []
+        query = query.filter(TxAddrMapping.block_time > after).order_by(TxAddrMapping.block_time.asc())
+
     else:
         query = query.order_by(TxAddrMapping.block_time.desc())
 
+    if acceptance == AcceptanceMode.accepted:
+        query = query.join(
+            TransactionAcceptance,
+            TxAddrMapping.transaction_id == TransactionAcceptance.transaction_id
+        )
+
     async with async_session() as s:
         result = await s.execute(query)
-        rows = result.all()
+        tx_ids_and_block_times = [(x.transaction_id, x.block_time) for x in result.all()]
 
-        if not rows:
-            response.headers["X-Page-Count"] = "0"
+        if not tx_ids_and_block_times:
             return []
 
-        # Extract transaction IDs and block times
-        tx_data = [(row.transaction_id, row.block_time) for row in rows]
-        tx_ids = {tx_id for tx_id, _ in tx_data}
-        block_times = [bt for _, bt in tx_data]
+        tx_ids_and_block_times.sort(key=lambda x: x[1], reverse=True)
 
-        newest_time = max(block_times)
-        oldest_time = min(block_times)
+        newest_block_time = tx_ids_and_block_times[0][1]
+        oldest_block_time = tx_ids_and_block_times[-1][1]
+        tx_ids = {tx_id for tx_id, _ in tx_ids_and_block_times}
 
-        # Handle edge case: same block_time across page boundary
-        if len(rows) >= limit:
-            extra_query = select(TxAddrMapping.transaction_id) \
-                .filter(TxAddrMapping.address == vecnoAddress) \
+        if len(tx_ids_and_block_times) == limit:
+            same_block_query = (
+                select(TxAddrMapping.transaction_id)
+                .filter(TxAddrMapping.address == vecno_address)
                 .filter(
                     or_(
-                        TxAddrMapping.block_time == newest_time,
-                        TxAddrMapping.block_time == oldest_time
+                        TxAddrMapping.block_time == newest_block_time,
+                        TxAddrMapping.block_time == oldest_block_time,
                     )
                 )
-            extra_result = await s.execute(extra_query)
-            tx_ids.update(extra_result.scalars().all())
+            )
+            extra_same = await s.execute(same_block_query)
+            tx_ids.update(extra_same.scalars().all())
 
-    # Set pagination headers
-    response.headers["X-Page-Count"] = str(len(tx_ids))
-    if len(tx_ids) >= limit:
-        response.headers["X-Next-Page-Before"] = str(oldest_time)
-        if after:
-            response.headers["X-Next-Page-After"] = str(newest_time)
+        has_newer = await s.scalar(
+            select(
+                exists().where(
+                    (TxAddrMapping.address == vecno_address)
+                    & (TxAddrMapping.block_time > newest_block_time)
+                )
+            )
+        )
 
-    # Fetch full transaction details
-    transactions = await search_for_transactions(
-        TxSearch(transactionIds=list(tx_ids)),
-        fields,
-        resolve_previous_outpoints
-    )
+        has_older = False
+        if not after or after >= GENESIS_MS:
+            has_older = await s.scalar(
+                select(
+                    exists().where(
+                        (TxAddrMapping.address == vecno_address)
+                        & (TxAddrMapping.block_time < oldest_block_time)
+                    )
+                )
+            )
 
-    # Sort correctly (newest first, unless using 'after')
-    if not after:
-        transactions.sort(key=lambda x: x.get("block_time", 0), reverse=True)
+        if has_newer:
+            response.headers["X-Next-Page-After"] = str(newest_block_time)
+        if has_older:
+            response.headers["X-Next-Page-Before"] = str(oldest_block_time)
 
-    return transactions
+        res = await search_for_transactions(
+            TxSearch(transactionIds=list(tx_ids), acceptingBlueScores=None),
+            fields,
+            resolve_previous_outpoints,
+            acceptance
+        )
+
+        response.headers["X-Page-Count"] = str(len(res))
+
+        if before:
+            add_cache_control(None, before, response)
+        elif after and len(tx_ids) >= limit:
+            max_block_time = max((r.get("block_time") for r in res), default=0)
+            add_cache_control(None, max_block_time, response)
+
+        return res

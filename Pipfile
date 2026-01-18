@@ -18,11 +18,9 @@ typing-inspect = "*"
 sqlalchemy = "*"
 fastapi = "*"
 uvicorn = "*"
+vecno-script-address = "*"
 
 [requires]
 python_version = "3.12"
 
 [dev-packages]
-
-
-
